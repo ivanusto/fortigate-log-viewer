@@ -93,20 +93,15 @@ function fmt(ms) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** The site a record is about: hostname, else the host part of url, else dstip. */
+/**
+ * The site a record is about: hostname, else dstip. url is deliberately not
+ * used (the same rule as onprem-logs' aup-report.py): under certificate
+ * inspection it carries nothing hostname does not, and "/" and a full URL
+ * must not become two sites.
+ */
 export function extractCleanHost(hostname, url, dstip) {
   if (hostname && hostname !== 'N/A' && hostname !== 'null') {
     return hostname.split(':')[0].toLowerCase().trim();
-  }
-  if (url && url !== 'N/A' && url !== '/') {
-    try {
-      const full = /^https?:\/\//i.test(url) ? url : 'http://' + url;
-      const host = new URL(full).hostname.toLowerCase();
-      if (host) return host;
-    } catch {
-      const m = url.match(/^(?:https?:\/\/)?([^/:?#]+)/i);
-      if (m && m[1]) return m[1].toLowerCase();
-    }
   }
   if (dstip) return dstip;
   return 'Unknown Site';
@@ -152,7 +147,7 @@ function recordFromKv(kv, lineIndex, line) {
     dstport: kv.dstport || '',
     action: rawAction,
     isAllowed: !DENIED_ACTIONS.has(rawAction),
-    category: kv.catdesc || kv.cat || kv.service || 'General Web',
+    category: kv.catdesc || 'Unrated',   // no FortiGuard rating (no licence, or a traffic line)
     type: kv.type || 'traffic',
     subtype: kv.subtype || 'forward',
     level: kv.level || 'notice',

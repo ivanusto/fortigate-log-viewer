@@ -107,8 +107,8 @@ test('csv export with a header row', () => {
 
 test('site extraction', () => {
   assert.equal(extractCleanHost('Docs.Example.COM:8443', '', ''), 'docs.example.com');
-  assert.equal(extractCleanHost('', 'https://a.example/x/y', ''), 'a.example');
-  assert.equal(extractCleanHost('', 'b.example/path', ''), 'b.example');
+  assert.equal(extractCleanHost('', 'https://a.example/x/y', '203.0.113.2'), '203.0.113.2');   // url is not read
+  assert.equal(extractCleanHost('', 'b.example/path', ''), 'Unknown Site');
   assert.equal(extractCleanHost('', '/', '203.0.113.1'), '203.0.113.1');
   assert.equal(extractCleanHost('', '', ''), 'Unknown Site');
 });
@@ -121,4 +121,16 @@ test('private addresses are never handed to the resolver', () => {
   for (const ip of ['172.32.0.1', '8.8.8.8', '203.0.113.7', '100.63.255.255', '192.167.1.1'])
     assert.equal(isPrivateIPv4(ip), false, ip);
   assert.deepEqual(resolvableIps(['192.168.2.49', '203.0.113.7', 'github.com', '203.0.113.7', '10.1.1.1']), ['203.0.113.7']);
+});
+
+test('same normalisation as aup-report.py: Unrated, no url fallback', () => {
+  const line = 'date=2026-10-08 time=00:14:46 eventtime=1791389686551541600 tz="+0800" type="utm" subtype="webfilter" eventtype="ftgd_err" srcip=192.168.2.131 dstip=104.16.123.96 service="HTTPS" hostname="www.cloudflare.com" profile="aup-monitor" action="passthrough" url="https://www.cloudflare.com/" msg="A rating error occurs" error="unknown"';
+  const r = parseFortiGateLogsDetailed(line);
+  const rec = r.records[0];
+  assert.equal(rec.category, 'Unrated');          // not "HTTPS" from service
+  assert.equal(rec.user, '192.168.2.131');
+  assert.equal(rec.site, 'www.cloudflare.com');
+  assert.equal(rec.isAllowed, true);
+  const noHost = parseFortiGateLogsDetailed('eventtime=1791389686551541600 srcip=192.168.2.23 dstip=203.0.113.9 url="https://other.example/"').records[0];
+  assert.equal(noHost.site, '203.0.113.9');       // no hostname: dstip, url is not read
 });
