@@ -6,13 +6,15 @@ import UserWebsiteList from './components/UserWebsiteList';
 import DetailedLogsTable from './components/DetailedLogsTable';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import LogDetailModal from './components/LogDetailModal';
-import { parseFortiGateLogs, buildUserWebsiteSummary } from './utils/fortigateParser';
+import { parseFortiGateLogsDetailed, buildUserWebsiteSummary } from './utils/fortigateParser';
 import { generateSampleFortiGateLogs } from './utils/sampleLogs';
-import { isIPv4, batchResolveIps } from './utils/reverseDns';
-import { Globe, List, PieChart, Sparkles, Upload, Search, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
+import { isIPv4, isPrivateIPv4, resolvableIps, batchResolveIps } from './utils/reverseDns';
+import { Globe, List, PieChart, Sparkles, Upload, Loader2, CheckCircle2, RefreshCw, ShieldOff } from 'lucide-react';
 
 export default function App() {
   const [allRecords, setAllRecords] = useState([]);
+  // lines / parsed / skipped / untimed / format of the loaded file
+  const [parseStats, setParseStats] = useState(null);
   const [sampleActive, setSampleActive] = useState(false);
   const [fileName, setFileName] = useState('');
   const [activeTab, setActiveTab] = useState('user-websites'); // 'user-websites' | 'detailed-logs' | 'analytics'
@@ -42,59 +44,45 @@ export default function App() {
     loadSampleData();
   }, []);
 
-  // Whenever allRecords changes, automatically trigger background Reverse DNS resolution for all IP sites!
-  useEffect(() => {
-    if (allRecords.length === 0) return;
-
-    const uniqueIpSites = Array.from(new Set(
-      allRecords
-        .map(r => r.site)
-        .filter(isIPv4)
-    ));
-
-    if (uniqueIpSites.length === 0) {
-      setDnsStatus({ isRunning: false, current: 0, total: 0 });
-      return;
-    }
-
-    setDnsStatus({ isRunning: true, current: 0, total: uniqueIpSites.length });
-
-    batchResolveIps(uniqueIpSites, (ip, result, current, total) => {
-      setResolvedIpMap(prev => ({
-        ...prev,
-        [ip]: result
-      }));
+  // Reverse DNS never starts by itself: a lookup sends the public IP
+  // addresses in the file to dns.google. The person starts it with the
+  // button in the banner; private addresses are never sent (reverseDns.js).
+  const startDnsLookup = () => {
+    const ips = resolvableIps(allRecords.map(r => r.site));
+    if (ips.length === 0) return;
+    setDnsStatus({ isRunning: true, current: 0, total: ips.length });
+    batchResolveIps(ips, (ip, result, current, total) => {
+      setResolvedIpMap(prev => ({ ...prev, [ip]: result }));
       setDnsStatus({ isRunning: current < total, current, total });
     });
+  };
 
-  }, [allRecords]);
-
-  const handleFileLoaded = (rawText, name = 'fortigate.log') => {
-    const parsed = parseFortiGateLogs(rawText);
-    if (parsed.length === 0) {
+  const loadParsed = (rawText, name, isSample) => {
+    const stats = parseFortiGateLogsDetailed(rawText);
+    if (stats.records.length === 0) {
       alert('未成功解析到有效的 FortiGate 日誌紀錄，請確認檔案格式是否正確。');
       return;
     }
-    setAllRecords(parsed);
+    setAllRecords(stats.records);
+    setParseStats({ lines: stats.lines, parsed: stats.parsed, skipped: stats.skipped, untimed: stats.untimed, format: stats.format });
     setFileName(name);
-    setSampleActive(false);
-    initializeTimeFilters(parsed);
+    setSampleActive(isSample);
+    setResolvedIpMap({});
+    setDnsStatus({ isRunning: false, current: 0, total: 0 });
+    initializeTimeFilters(stats.records);
   };
 
-  const loadSampleData = () => {
-    const sampleText = generateSampleFortiGateLogs();
-    const parsed = parseFortiGateLogs(sampleText);
-    setAllRecords(parsed);
-    setFileName('sample_fortigate_utm.log');
-    setSampleActive(true);
-    initializeTimeFilters(parsed);
-  };
+  const handleFileLoaded = (rawText, name = 'fortigate.log') => loadParsed(rawText, name, false);
+
+  const loadSampleData = () => loadParsed(generateSampleFortiGateLogs(), 'sample_fortigate_utm.log', true);
 
   const clearLogs = () => {
     setAllRecords([]);
+    setParseStats(null);
     setFileName('');
     setSampleActive(false);
     setResolvedIpMap({});
+    setDnsStatus({ isRunning: false, current: 0, total: 0 });
   };
 
   const triggerFilePicker = () => {
@@ -112,30 +100,10 @@ export default function App() {
     e.target.value = '';
   };
 
-  // Manual re-trigger DNS lookup
-  const retriggerDnsLookup = () => {
-    const uniqueIpSites = Array.from(new Set(
-      allRecords
-        .map(r => r.site)
-        .filter(isIPv4)
-    ));
-
-    if (uniqueIpSites.length === 0) return;
-    setDnsStatus({ isRunning: true, current: 0, total: uniqueIpSites.length });
-
-    batchResolveIps(uniqueIpSites, (ip, result, current, total) => {
-      setResolvedIpMap(prev => ({
-        ...prev,
-        [ip]: result
-      }));
-      setDnsStatus({ isRunning: current < total, current, total });
-    });
-  };
-
-  // Set default start/end dates based on parsed records
+  // Set default start/end dates based on parsed records (untimed ones excluded)
   const initializeTimeFilters = (records) => {
-    if (!records || records.length === 0) return;
-    const timestamps = records.map(r => r.timestamp);
+    const timestamps = (records || []).map(r => r.timestamp).filter(t => t !== null);
+    if (timestamps.length === 0) return;
     const minTs = Math.min(...timestamps);
     const maxTs = Math.max(...timestamps);
 
@@ -155,21 +123,21 @@ export default function App() {
     }));
   };
 
-  // Count IP-only records
-  const ipOnlyCount = useMemo(() => {
+  // Sites that are bare IP addresses: public ones can be looked up, private ones never are
+  const { ipOnlyCount, publicIpCount, privateIpCount } = useMemo(() => {
     const set = new Set();
-    allRecords.forEach(r => {
-      if (isIPv4(r.site)) set.add(r.site);
-    });
-    return set.size;
+    allRecords.forEach(r => { if (isIPv4(r.site)) set.add(r.site); });
+    const all = Array.from(set);
+    const priv = all.filter(isPrivateIPv4).length;
+    return { ipOnlyCount: all.length, publicIpCount: all.length - priv, privateIpCount: priv };
   }, [allRecords]);
 
   // Min and Max dates from all records
   const { minDate, maxDate, availableUsers, availableCategories } = useMemo(() => {
-    if (allRecords.length === 0) {
+    const timestamps = allRecords.map(r => r.timestamp).filter(t => t !== null);
+    if (timestamps.length === 0) {
       return { minDate: null, maxDate: null, availableUsers: [], availableCategories: [] };
     }
-    const timestamps = allRecords.map(r => r.timestamp);
     const minTs = Math.min(...timestamps);
     const maxTs = Math.max(...timestamps);
 
@@ -205,8 +173,10 @@ export default function App() {
     }
 
     return allRecords.filter(rec => {
-      // Time Filter
-      if (rec.timestamp < startTs || rec.timestamp > endTs) return false;
+      // Time Filter: an untimed record is shown only when no time filter is set
+      if (rec.timestamp === null) {
+        if (filters.startDate || filters.endDate) return false;
+      } else if (rec.timestamp < startTs || rec.timestamp > endTs) return false;
 
       // User Filter
       if (filters.selectedUser && rec.user !== filters.selectedUser) return false;
@@ -280,36 +250,49 @@ export default function App() {
                 <div>
                   <strong>目前載入檔案：</strong> <code className="font-mono bg-slate-900 px-2 py-0.5 rounded text-amber-300">{fileName}</code>
                   {sampleActive ? '（示範資料）' : ''}，共 <strong>{allRecords.length.toLocaleString()}</strong> 筆紀錄。
+                  {parseStats && (
+                    <span className="ml-2 text-xs text-slate-300" title="非空白行 = 解析 + 略過；無時間的紀錄沒有 eventtime 也沒有 date/time">
+                      {parseStats.format === 'csv' ? 'CSV' : 'key=value'}，{parseStats.lines.toLocaleString()} 行 = {parseStats.parsed.toLocaleString()} 解析 + {parseStats.skipped.toLocaleString()} 略過
+                      {parseStats.untimed > 0 && <>，{parseStats.untimed.toLocaleString()} 筆無時間</>}
+                    </span>
+                  )}
                   {ipOnlyCount > 0 && (
                     <span className="ml-2 text-xs font-semibold text-blue-300">
-                      (包含 {ipOnlyCount} 個 IP 站點)
+                      (包含 {ipOnlyCount} 個 IP 站點{privateIpCount > 0 ? `，其中 ${privateIpCount} 個內網位址不反查` : ''})
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Automated Reverse DNS Status Badge */}
-                  {ipOnlyCount > 0 && (
+                  {/* Reverse DNS: opt-in, public addresses only */}
+                  {publicIpCount > 0 && (
                     <div className="dns-status-pill">
                       {dnsStatus.isRunning ? (
                         <>
                           <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
                           <span className="text-xs text-amber-300 font-semibold">
-                            自動反查 IP 域名中... ({dnsStatus.current} / {dnsStatus.total})
+                            反查公開 IP 中... ({dnsStatus.current} / {dnsStatus.total})
                           </span>
                         </>
-                      ) : (
+                      ) : dnsStatus.total > 0 ? (
                         <>
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                           <span className="text-xs text-emerald-400 font-semibold">
-                            IP 域名已全數反查完成 ({dnsStatus.total} 個)
+                            已反查 {dnsStatus.total} 個公開 IP
                           </span>
-                          <button 
-                            onClick={retriggerDnsLookup}
-                            className="btn-icon p-1 ml-1"
-                            title="重新執行 IP 反查"
-                          >
+                          <button onClick={startDnsLookup} className="btn-icon p-1 ml-1" title="重新反查">
                             <RefreshCw className="w-3 h-3 text-slate-400" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldOff className="w-3.5 h-3.5 text-slate-400" />
+                          <button
+                            onClick={startDnsLookup}
+                            className="text-xs text-slate-200 font-semibold underline-offset-2 hover:underline"
+                            title="會把這些公開 IP 以 DNS over HTTPS 送到 dns.google 查 PTR；內網位址不送"
+                          >
+                            反查 {publicIpCount} 個公開 IP（會連 dns.google）
                           </button>
                         </>
                       )}

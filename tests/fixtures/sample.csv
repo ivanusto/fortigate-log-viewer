@@ -1,0 +1,4 @@
+date,time,eventtime,tz,type,subtype,srcip,dstip,dstport,action,hostname,url,catdesc,sentbyte,rcvdbyte,user
+2026-10-06,09:12:03,1791249123456789012,+0800,utm,webfilter,192.168.2.10,203.0.113.7,443,passthrough,docs.victoriametrics.com,/,Information Technology,517,0,
+2026-10-06,09:13:41,1791249221000000000,+0800,utm,webfilter,192.168.2.23,203.0.113.44,443,blocked,casino.example.net,/,Gambling,0,0,
+2026-10-06,09:14:02,,+0800,utm,webfilter,192.168.2.23,203.0.113.45,80,blocked,login-verify.example.org,"/account/verify?x=1,2",Phishing,0,0,"ivan, c"

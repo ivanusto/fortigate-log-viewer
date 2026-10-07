@@ -1,230 +1,267 @@
 /**
- * FortiGate Log Parser Utility
- * Parses FortiGate raw text/syslog/CSV log lines into structured web activity records.
+ * FortiGate log parser.
+ *
+ * Input: the text of a file exported from a FortiGate (Log & Report ->
+ * download), from FortiAnalyzer, or copied out of a syslog collector. Each
+ * line is key=value pairs; a CSV export with a header row is accepted too.
+ * Output: one record per parsed line with the fields the viewer needs, plus
+ * counts of what was NOT parsed, so the total can be reconciled with the
+ * file ("lines = parsed + skipped").
+ *
+ * Time. Every record's timestamp is taken, in this order, from
+ *   1. eventtime   (FortiOS 6.2+, an epoch in s/ms/us/ns, auto-scaled)
+ *   2. date + time + tz   (tz="+0800" as written by FortiOS 7.x)
+ *   3. date + time        in the browser's local time zone (no tz field)
+ * A line without any of these keeps timestamp = null and is counted as
+ * "untimed"; it is never given the current time.
+ *
+ * Nothing here talks to the network.
  */
 
-// Parse a single key-value line from FortiGate log
+const KV_RE = /([A-Za-z0-9_.-]+)=(?:"([^"]*)"|'([^']*)'|([^\s,]+))/g;
+const DENIED_ACTIONS = new Set(['deny', 'block', 'blocked', 'dropped', 'reject', 'drop']);
+const TZ_RE = /^([+-])(\d{2}):?(\d{2})$/;
+
+/** Parse one key=value line into an object with lower-case keys. */
 export function parseKvLine(line) {
   if (!line || typeof line !== 'string') return null;
   const kv = {};
-  
-  // Regex matches key="val with spaces", key='val', or key=val
-  const kvRegex = /([a-zA-Z0-9_\-\.]+)=(?:"([^"]*)"|'([^']*)'|([^\s,]+))/g;
-  let match;
-  while ((match = kvRegex.exec(line)) !== null) {
-    const key = (match[1] || match[3] || match[5]).toLowerCase();
-    const val = match[2] !== undefined ? match[2] : (match[4] !== undefined ? match[4] : match[6]);
-    if (key) {
-      kv[key] = val;
-    }
+  KV_RE.lastIndex = 0;
+  let m;
+  while ((m = KV_RE.exec(line)) !== null) {
+    const key = m[1].toLowerCase();
+    kv[key] = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4];
   }
-
   return kv;
 }
 
-// Extract root domain or clean hostname from raw URL/hostname string
+/** Split one CSV line (RFC 4180 quoting). */
+export function splitCsvLine(line) {
+  const out = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else { inQ = false; }
+      } else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** A CSV header row: comma separated, no '=', and it names FortiGate fields. */
+export function looksLikeCsvHeader(line) {
+  if (!line || line.includes('=')) return false;
+  const cols = splitCsvLine(line).map(c => c.trim().toLowerCase());
+  if (cols.length < 3) return false;
+  const known = ['srcip', 'dstip', 'date', 'time', 'logid', 'type', 'subtype', 'action', 'eventtime', 'hostname', 'url', 'catdesc'];
+  return cols.filter(c => known.includes(c)).length >= 2;
+}
+
+/** Epoch in seconds, milliseconds, microseconds or nanoseconds -> ms. */
+export function eventtimeToMs(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const s = String(raw).trim();
+  if (!/^\d+$/.test(s)) return null;
+  const digits = s.length;
+  // 2001-2286 in seconds is 10 digits; FortiOS writes ns (19 digits)
+  if (digits >= 18) return Math.floor(Number(BigInt(s) / 1000000n));
+  if (digits >= 15) return Math.floor(Number(BigInt(s) / 1000n));
+  if (digits >= 12) return Number(s);
+  return Number(s) * 1000;
+}
+
+/** "YYYY-MM-DD", "HH:MM:SS", "+0800" -> ms; tz missing -> browser local. */
+export function dateTimeToMs(dateStr, timeStr, tz) {
+  if (!dateStr || !timeStr) return null;
+  const d = dateStr.replace(/\//g, '-');
+  const m = tz ? TZ_RE.exec(tz.trim()) : null;
+  const t = m ? new Date(`${d}T${timeStr}${m[1]}${m[2]}:${m[3]}`).getTime()
+              : new Date(`${d}T${timeStr}`).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function fmt(ms) {
+  if (ms === null) return '';
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** The site a record is about: hostname, else the host part of url, else dstip. */
 export function extractCleanHost(hostname, url, dstip) {
   if (hostname && hostname !== 'N/A' && hostname !== 'null') {
-    // Remove port if present
-    let host = hostname.split(':')[0].toLowerCase();
-    // Strip trailing slashes
-    return host.trim();
+    return hostname.split(':')[0].toLowerCase().trim();
   }
-
-  if (url && url !== 'N/A') {
+  if (url && url !== 'N/A' && url !== '/') {
     try {
-      let fullUrl = url;
-      if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
-        fullUrl = 'http://' + fullUrl;
-      }
-      const parsed = new URL(fullUrl);
-      return parsed.hostname.toLowerCase();
+      const full = /^https?:\/\//i.test(url) ? url : 'http://' + url;
+      const host = new URL(full).hostname.toLowerCase();
+      if (host) return host;
     } catch {
-      // Fallback regex for URL
-      const match = url.match(/^(?:https?:\/\/)?([^\/\:\?#]+)/i);
-      if (match && match[1]) return match[1].toLowerCase();
+      const m = url.match(/^(?:https?:\/\/)?([^/:?#]+)/i);
+      if (m && m[1]) return m[1].toLowerCase();
     }
   }
-
   if (dstip) return dstip;
-
   return 'Unknown Site';
 }
 
-// Parse entire raw log string into structured records
-export function parseFortiGateLogs(rawText) {
-  if (!rawText) return [];
+function recordFromKv(kv, lineIndex, line) {
+  let timestamp = eventtimeToMs(kv.eventtime);
+  let timeSource = 'eventtime';
+  if (timestamp === null) {
+    timestamp = dateTimeToMs(kv.date, kv.time, kv.tz);
+    timeSource = kv.tz ? 'date+time+tz' : 'date+time(local)';
+  }
+  if (timestamp === null) timeSource = 'none';
 
+  const user = (kv.user || kv.srcuser || kv.unauthuser || kv.srcip || 'Unknown User').trim();
+  const rawHostname = kv.hostname || '';
+  const rawUrl = kv.url || '';
+  const dstip = kv.dstip || '';
+  const site = extractCleanHost(rawHostname, rawUrl, dstip);
+  const fullUrl = rawUrl && rawUrl !== '/' ? (/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawHostname || ''}${rawUrl}`)
+                : (rawHostname ? `https://${rawHostname}` : dstip);
+  const rawAction = (kv.action || kv.eventtype || 'accept').toLowerCase();
+  const sentbyte = parseInt(kv.sentbyte || '0', 10) || 0;
+  const rcvdbyte = parseInt(kv.rcvdbyte || '0', 10) || 0;
+
+  return {
+    id: `log-${lineIndex}`,
+    lineIndex,
+    timestamp,
+    timeSource,
+    formattedDateTime: fmt(timestamp),
+    date: kv.date || (timestamp === null ? '' : fmt(timestamp).slice(0, 10)),
+    time: kv.time || (timestamp === null ? '' : fmt(timestamp).slice(11)),
+    user,
+    srcip: kv.srcip || 'N/A',
+    srcmac: kv.srcmac || kv.mastersrcmac || '',
+    srcname: kv.srcname || '',
+    site,
+    rawHostname,
+    rawUrl,
+    fullUrl,
+    dstip,
+    dstport: kv.dstport || '',
+    action: rawAction,
+    isAllowed: !DENIED_ACTIONS.has(rawAction),
+    category: kv.catdesc || kv.cat || kv.service || 'General Web',
+    type: kv.type || 'traffic',
+    subtype: kv.subtype || 'forward',
+    level: kv.level || 'notice',
+    sentbyte,
+    rcvdbyte,
+    totalBytes: sentbyte + rcvdbyte,
+    policyid: kv.policyid || 'N/A',
+    devname: kv.devname || 'FortiGate',
+    rawKv: kv,
+    rawLine: line
+  };
+}
+
+/**
+ * Parse a whole file. Returns { records, lines, parsed, skipped, untimed,
+ * format } where lines counts non-empty lines, skipped the lines that held
+ * no key=value pair (banners, headers, junk), untimed the records without
+ * any usable time field. records are sorted by time; untimed ones last.
+ */
+export function parseFortiGateLogsDetailed(rawText) {
+  const result = { records: [], lines: 0, parsed: 0, skipped: 0, untimed: 0, format: 'kv' };
+  if (!rawText) return result;
   const lines = rawText.split(/\r?\n/);
-  const records = [];
-
+  let header = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-
-    const kv = parseKvLine(line);
-    if (!kv || Object.keys(kv).length === 0) continue;
-
-    // Extract Date & Time
-    let dateStr = kv.date || '';
-    let timeStr = kv.time || '';
-    let timestamp = null;
-    let formattedDateTime = '';
-
-    if (dateStr && timeStr) {
-      // Standardize date format YYYY-MM-DD
-      const cleanDate = dateStr.replace(/\//g, '-');
-      formattedDateTime = `${cleanDate} ${timeStr}`;
-      timestamp = new Date(formattedDateTime).getTime();
-    } else if (kv.timestamp) {
-      const tsNum = parseInt(kv.timestamp, 10);
-      if (!isNaN(tsNum)) {
-        timestamp = tsNum > 1e11 ? tsNum : tsNum * 1000;
-        const d = new Date(timestamp);
-        formattedDateTime = d.toISOString().replace('T', ' ').substring(0, 19);
-      }
+    result.lines++;
+    let kv;
+    if (header === null && result.parsed === 0 && looksLikeCsvHeader(line)) {
+      header = splitCsvLine(line).map(c => c.trim().toLowerCase());
+      result.format = 'csv';
+      result.skipped++; // the header row is not a record
+      continue;
     }
-
-    if (!timestamp || isNaN(timestamp)) {
-      timestamp = Date.now();
-      formattedDateTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    if (header) {
+      const cells = splitCsvLine(line);
+      kv = {};
+      header.forEach((h, j) => { if (h && cells[j] !== undefined && cells[j] !== '') kv[h] = cells[j]; });
+    } else {
+      kv = parseKvLine(line);
     }
-
-    // Extract User Identity (user > srcuser > unauthuser > srcip)
-    const user = (kv.user || kv.srcuser || kv.unauthuser || kv.srcip || 'Unknown User').trim();
-    const srcip = kv.srcip || 'N/A';
-    const srcmac = kv.srcmac || '';
-
-    // Extract Destination Site & URL
-    const rawHostname = kv.hostname || '';
-    const rawUrl = kv.url || '';
-    const dstip = kv.dstip || '';
-    const site = extractCleanHost(rawHostname, rawUrl, dstip);
-    const fullUrl = rawUrl || (rawHostname ? `https://${rawHostname}` : dstip);
-
-    // Extract Action & Category
-    const rawAction = (kv.action || kv.eventtype || 'accept').toLowerCase();
-    let isAllowed = true;
-    if (['deny', 'block', 'blocked', 'dropped', 'reject'].includes(rawAction)) {
-      isAllowed = false;
-    }
-
-    const category = kv.catdesc || kv.cat || kv.service || 'General Web';
-    const type = kv.type || 'traffic';
-    const subtype = kv.subtype || 'forward';
-    const level = kv.level || 'notice';
-    const sentbyte = parseInt(kv.sentbyte || '0', 10);
-    const rcvdbyte = parseInt(kv.rcvdbyte || '0', 10);
-    const totalBytes = sentbyte + rcvdbyte;
-
-    records.push({
-      id: `log-${i}-${Math.random().toString(36).substr(2, 6)}`,
-      lineIndex: i + 1,
-      timestamp,
-      formattedDateTime,
-      date: dateStr || formattedDateTime.split(' ')[0],
-      time: timeStr || formattedDateTime.split(' ')[1] || '',
-      user,
-      srcip,
-      srcmac,
-      site,
-      rawHostname,
-      rawUrl,
-      fullUrl,
-      dstip,
-      dstport: kv.dstport || '443',
-      action: rawAction,
-      isAllowed,
-      category,
-      type,
-      subtype,
-      level,
-      sentbyte,
-      rcvdbyte,
-      totalBytes,
-      policyid: kv.policyid || 'N/A',
-      devname: kv.devname || 'FortiGate',
-      rawKv: kv,
-      rawLine: line
-    });
+    if (!kv || Object.keys(kv).length === 0) { result.skipped++; continue; }
+    const rec = recordFromKv(kv, i + 1, line);
+    if (rec.timestamp === null) result.untimed++;
+    result.records.push(rec);
+    result.parsed++;
   }
-
-  // Sort chronologically by timestamp ascending
-  return records.sort((a, b) => a.timestamp - b.timestamp);
+  result.records.sort((a, b) => {
+    if (a.timestamp === null && b.timestamp === null) return a.lineIndex - b.lineIndex;
+    if (a.timestamp === null) return 1;
+    if (b.timestamp === null) return -1;
+    return a.timestamp - b.timestamp || a.lineIndex - b.lineIndex;
+  });
+  return result;
 }
 
-// Group records by user and website for the requested "User Visited Website List"
+/** Records only (same as before v0.1.0). */
+export function parseFortiGateLogs(rawText) {
+  return parseFortiGateLogsDetailed(rawText).records;
+}
+
+/** Group records by user, then by site. */
 export function buildUserWebsiteSummary(records) {
   const userMap = new Map();
-
   records.forEach(rec => {
     if (!userMap.has(rec.user)) {
       userMap.set(rec.user, {
-        user: rec.user,
-        srcip: rec.srcip,
-        totalVisits: 0,
-        totalBytes: 0,
-        allowedCount: 0,
-        blockedCount: 0,
-        websites: new Map(),
-        firstSeen: rec.formattedDateTime,
-        lastSeen: rec.formattedDateTime
+        user: rec.user, srcip: rec.srcip, srcname: rec.srcname, srcmac: rec.srcmac,
+        totalVisits: 0, totalBytes: 0, allowedCount: 0, blockedCount: 0,
+        websites: new Map(), firstSeen: rec.formattedDateTime, lastSeen: rec.formattedDateTime
       });
     }
+    const u = userMap.get(rec.user);
+    u.totalVisits++;
+    u.totalBytes += rec.totalBytes;
+    if (rec.isAllowed) u.allowedCount++; else u.blockedCount++;
+    if (rec.formattedDateTime && (!u.firstSeen || rec.formattedDateTime < u.firstSeen)) u.firstSeen = rec.formattedDateTime;
+    if (rec.formattedDateTime > u.lastSeen) u.lastSeen = rec.formattedDateTime;
+    if (!u.srcname && rec.srcname) u.srcname = rec.srcname;
+    if (!u.srcmac && rec.srcmac) u.srcmac = rec.srcmac;
 
-    const userData = userMap.get(rec.user);
-    userData.totalVisits++;
-    userData.totalBytes += rec.totalBytes;
-    if (rec.isAllowed) userData.allowedCount++;
-    else userData.blockedCount++;
-
-    if (rec.formattedDateTime < userData.firstSeen) userData.firstSeen = rec.formattedDateTime;
-    if (rec.formattedDateTime > userData.lastSeen) userData.lastSeen = rec.formattedDateTime;
-
-    // Update website details under user
-    if (!userData.websites.has(rec.site)) {
-      userData.websites.set(rec.site, {
-        site: rec.site,
-        category: rec.category,
-        visitCount: 0,
-        totalBytes: 0,
-        allowedCount: 0,
-        blockedCount: 0,
-        lastVisit: rec.formattedDateTime,
-        sampleUrl: rec.fullUrl
+    if (!u.websites.has(rec.site)) {
+      u.websites.set(rec.site, {
+        site: rec.site, category: rec.category, visitCount: 0, totalBytes: 0,
+        allowedCount: 0, blockedCount: 0, lastVisit: rec.formattedDateTime, sampleUrl: rec.fullUrl
       });
     }
-
-    const siteData = userData.websites.get(rec.site);
-    siteData.visitCount++;
-    siteData.totalBytes += rec.totalBytes;
-    if (rec.isAllowed) siteData.allowedCount++;
-    else siteData.blockedCount++;
-    if (rec.formattedDateTime > siteData.lastVisit) {
-      siteData.lastVisit = rec.formattedDateTime;
-      if (rec.fullUrl) siteData.sampleUrl = rec.fullUrl;
+    const s = u.websites.get(rec.site);
+    s.visitCount++;
+    s.totalBytes += rec.totalBytes;
+    if (rec.isAllowed) s.allowedCount++; else s.blockedCount++;
+    if (rec.formattedDateTime > s.lastVisit) {
+      s.lastVisit = rec.formattedDateTime;
+      if (rec.fullUrl) s.sampleUrl = rec.fullUrl;
     }
   });
-
-  // Convert map to array format
   const result = [];
-  userMap.forEach(userData => {
-    const siteList = Array.from(userData.websites.values()).sort((a, b) => b.visitCount - a.visitCount);
-    result.push({
-      ...userData,
-      websiteCount: siteList.length,
-      websiteList: siteList
-    });
+  userMap.forEach(u => {
+    const websiteList = Array.from(u.websites.values()).sort((a, b) => b.visitCount - a.visitCount || a.site.localeCompare(b.site));
+    result.push({ ...u, websiteCount: websiteList.length, websiteList });
   });
-
-  return result.sort((a, b) => b.totalVisits - a.totalVisits);
+  return result.sort((a, b) => b.totalVisits - a.totalVisits || a.user.localeCompare(b.user));
 }
 
-// Format bytes into readable string (KB, MB, GB)
 export function formatBytes(bytes) {
-  if (bytes === 0 || !bytes) return '0 B';
+  if (!bytes) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }

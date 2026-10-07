@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Calendar, Clock, User, Globe, Filter, RotateCcw, ShieldAlert, CheckCircle, ListFilter } from 'lucide-react';
+import { Search, Calendar, Clock, User, Globe, Filter, RotateCcw, ShieldAlert, ListFilter } from 'lucide-react';
 
 export default function FilterBar({ 
   filters, 

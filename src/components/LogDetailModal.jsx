@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Copy, Check, FileText, Server, Code, Globe } from 'lucide-react';
+import { X, Copy, Check, FileText, Server, Code } from 'lucide-react';
 import { isIPv4 } from '../utils/reverseDns';
 
 export default function LogDetailModal({ record, onClose, resolvedIpMap = {} }) {

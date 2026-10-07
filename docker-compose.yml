@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   fortigate-log-viewer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: fortigate-log-viewer
-    restart: always
+    restart: unless-stopped
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"   # the viewer serves static files only; bind to this host

@@ -39,7 +39,7 @@ export default function DetailedLogsTable({ records, onSelectLog, resolvedIpMap 
     return filtered.sort((a, b) => {
       let comp = 0;
       if (sortBy === 'timestamp') {
-        comp = a.timestamp - b.timestamp;
+        comp = (a.timestamp ?? Infinity) - (b.timestamp ?? Infinity);
       } else if (sortBy === 'totalBytes') {
         comp = a.totalBytes - b.totalBytes;
       } else if (sortBy === 'user') {

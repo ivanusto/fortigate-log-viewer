@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { PieChart, BarChart2, Activity, ShieldCheck, ShieldAlert, Globe, User, Tag } from 'lucide-react';
+import { Activity, ShieldCheck, ShieldAlert, Globe, User } from 'lucide-react';
 import { formatBytes } from '../utils/fortigateParser';
 
 export default function AnalyticsDashboard({ records }) {

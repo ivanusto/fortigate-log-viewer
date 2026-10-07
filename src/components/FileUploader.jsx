@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileCode2, Play, Lock, CheckCircle2, Sparkles, FileText } from 'lucide-react';
+import { UploadCloud, FileCode2, Lock, Sparkles } from 'lucide-react';
 
 export default function FileUploader({ onFileLoaded, onLoadSample }) {
   const fileInputRef = useRef(null);
@@ -76,7 +76,7 @@ export default function FileUploader({ onFileLoaded, onLoadSample }) {
 
         <div className="security-privacy-tag">
           <Lock className="w-3.5 h-3.5" />
-          <span>100% 本地瀏覽器端解析，日誌數據絕不上傳伺服器，安全無虞</span>
+          <span>解析在瀏覽器端完成，日誌不離開這台電腦。只有按下「反查公開 IP」時，檔案裡的公開 IP 位址才會送到 dns.google 查 PTR，內網位址一律不送</span>
         </div>
 
         <div className="upload-actions" onClick={(e) => e.stopPropagation()}>
