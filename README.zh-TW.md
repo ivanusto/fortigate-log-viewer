@@ -12,7 +12,8 @@
 |---|---|
 | 輸入 | 每行 `key=value`（FortiOS 寫的樣子），或帶標題列、欄名是 FortiOS 欄位的 CSV。沒有任何一組鍵值的行（標語、分隔線）算「略過」，不會無聲消失，橫幅顯示 `行數 = 解析 + 略過` |
 | 身份 | `user`，沒有就 `srcuser`、`unauthuser`，最後是 `srcip`。`srcname` 與 `srcmac` 保留並顯示，DHCP 的位址能對回工作站 |
-| 網站 | `hostname`，沒有就 `url` 的主機部分，最後是 `dstip` |
+| 網站 | `hostname`，沒有就 `dstip`。`url` 刻意不用，`url="/"` 與完整 URL 不該變成兩個網站 |
+| 類別 | `catdesc`，空的算 `Unrated`（沒有 FortiGuard 授權時全部是這一格；traffic 行也沒有類別） |
 | 時間 | 先用 `eventtime`（FortiOS 6.2 起，7.x 是奈秒），沒有就 `date` + `time` + `tz`，再沒有就 `date` + `time` 以瀏覽器的時區解讀。三者都沒有的行保留但沒有時間，計為「無時間」，不會被蓋上現在的時間。每筆紀錄記著它的時間是哪一條規則給的（`timeSource`） |
 | 放行或擋下 | `action` 是 deny、block、blocked、dropped、reject、drop 算擋下，其餘（passthrough、accept、close、timeout 等）算放行 |
 | 檢視 | 依使用者列網站、次數、位元組、放行與擋下、首末時間。原始行加細節視窗。幾張統計圖 |

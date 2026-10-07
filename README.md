@@ -12,7 +12,8 @@ Written for Day 24 of [onprem-ops-30days](https://github.com/ivanusto/onprem-ops
 |---|---|
 | Input | Lines of `key=value` pairs (what FortiOS writes), or a CSV with a header row naming the FortiOS fields. Lines with no pair at all (banners, separators) are counted as skipped, not dropped silently: the banner shows `lines = parsed + skipped` |
 | Identity | `user`, else `srcuser`, else `unauthuser`, else `srcip`. `srcname` and `srcmac` are kept and shown, so a DHCP address can be tied back to a workstation |
-| Site | `hostname`, else the host part of `url`, else `dstip` |
+| Site | `hostname`, else `dstip`. `url` is deliberately not used: `url="/"` and a full URL must not become two sites |
+| Category | `catdesc`, else `Unrated` (every line without a FortiGuard licence; traffic lines have no category either) |
 | Time | `eventtime` (FortiOS 6.2+, nanoseconds in 7.x) first; else `date` + `time` + `tz`; else `date` + `time` in the browser's zone. A line with none of these is kept with no time and counted as "untimed", it is never stamped with the current time. Each record says which rule gave it its time (`timeSource`) |
 | Allowed or blocked | `action` in deny, block, blocked, dropped, reject, drop is blocked; anything else (passthrough, accept, close, timeout…) is allowed |
 | Views | per user: sites, visits, bytes, allowed/blocked, first and last seen; the raw rows with a detail modal; a few charts |
