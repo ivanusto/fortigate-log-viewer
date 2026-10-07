@@ -39,7 +39,7 @@ docker compose up -d --build     # http://127.0.0.1:5173
 npm run lint && npm test && npm run build
 ```
 
-Dockerfile 用 `node:20-alpine` 建、`nginx:alpine` 送，兩個都是以 tag 指定。要放到任何重要的地方之前先釘 digest（為什麼與怎麼釘，見系列的 Day 3）。
+Dockerfile 用 `node:22-alpine` 建、`nginx:alpine` 送，兩個都以 digest 釘住（為什麼要釘，見系列的 Day 3）。Node 20 已於 2026 年 4 月停止支援，CI 也是用 22。更新時以 `docker buildx imagetools inspect <映像>` 取新的 digest 換掉。
 
 ## 目錄
 

@@ -39,7 +39,7 @@ docker compose up -d --build     # http://127.0.0.1:5173
 npm run lint && npm test && npm run build
 ```
 
-The Dockerfile builds with `node:20-alpine` and serves with `nginx:alpine`, both by tag. Pin both to a digest before using the image anywhere that matters (see Day 3 of the series for the why and a script that does it).
+The Dockerfile builds with `node:22-alpine` and serves with `nginx:alpine`, both pinned by digest (see Day 3 of the series for the why). Node 20 reached end of life in April 2026; CI uses 22 as well. To refresh, take the new digest from `docker buildx imagetools inspect <image>`.
 
 ## Layout
 
