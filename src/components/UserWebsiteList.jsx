@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Globe, User, ExternalLink, Download, Copy, Check, ChevronDown, ChevronRight, ShieldCheck, ShieldAlert, ArrowUpDown, Tag, Loader2 } from 'lucide-react';
-import { formatBytes } from '../utils/fortigateParser';
+import { formatBytes, localDate } from '../utils/fortigateParser';
 import { isIPv4 } from '../utils/reverseDns';
 
 export default function UserWebsiteList({ userSummaryData, filteredRecords, resolvedIpMap = {} }) {
@@ -182,7 +182,7 @@ export default function UserWebsiteList({ userSummaryData, filteredRecords, reso
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `FortiGate_User_Websites_${groupBy}_${new Date().toISOString().substring(0, 10)}.csv`);
+    link.setAttribute('download', `FortiGate_User_Websites_${groupBy}_${localDate(new Date())}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

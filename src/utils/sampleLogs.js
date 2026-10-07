@@ -1,3 +1,4 @@
+import { localDate } from './fortigateParser';
 /**
  * Sample FortiGate Log Generator
  * Generates realistic FortiGate webfilter and traffic log lines for demonstration.
@@ -48,7 +49,7 @@ export function generateSampleFortiGateLogs() {
     logTime.setMinutes(logTime.getMinutes() + Math.floor(Math.random() * 50));
     logTime.setSeconds(Math.floor(Math.random() * 60));
 
-    const dateStr = logTime.toISOString().substring(0, 10);
+    const dateStr = localDate(logTime);
     const timeStr = logTime.toTimeString().substring(0, 8);
 
     // Pick 2-4 entries per timestamp

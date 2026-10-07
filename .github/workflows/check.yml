@@ -14,4 +14,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: npm test   # east of UTC: the default date range must be the local date
+        env: {TZ: Asia/Taipei}
       - run: npm run build

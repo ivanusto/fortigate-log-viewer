@@ -86,6 +86,17 @@ export function dateTimeToMs(dateStr, timeStr, tz) {
   return Number.isNaN(t) ? null : t;
 }
 
+/**
+ * YYYY-MM-DD of a Date in the browser's zone. The date inputs and the time
+ * filter read dates as local, so a default range must not come from
+ * toISOString() (UTC): east of UTC that drops the hours between local
+ * midnight and the UTC date change.
+ */
+export function localDate(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function fmt(ms) {
   if (ms === null) return '';
   const d = new Date(ms);

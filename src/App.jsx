@@ -6,7 +6,7 @@ import UserWebsiteList from './components/UserWebsiteList';
 import DetailedLogsTable from './components/DetailedLogsTable';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import LogDetailModal from './components/LogDetailModal';
-import { parseFortiGateLogsDetailed, buildUserWebsiteSummary } from './utils/fortigateParser';
+import { parseFortiGateLogsDetailed, buildUserWebsiteSummary, localDate } from './utils/fortigateParser';
 import { generateSampleFortiGateLogs } from './utils/sampleLogs';
 import { isIPv4, isPrivateIPv4, resolvableIps, batchResolveIps } from './utils/reverseDns';
 import { Globe, List, PieChart, Sparkles, Upload, Loader2, CheckCircle2, RefreshCw, ShieldOff } from 'lucide-react';
@@ -112,9 +112,9 @@ export default function App() {
 
     setFilters(prev => ({
       ...prev,
-      startDate: minD.toISOString().substring(0, 10),
+      startDate: localDate(minD),
       startTime: '00:00',
-      endDate: maxD.toISOString().substring(0, 10),
+      endDate: localDate(maxD),
       endTime: '23:59',
       selectedUser: '',
       domainSearch: '',

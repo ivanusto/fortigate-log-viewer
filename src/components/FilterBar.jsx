@@ -1,5 +1,6 @@
 import React from 'react';
 import { Search, Calendar, Clock, User, Globe, Filter, RotateCcw, ShieldAlert, ListFilter } from 'lucide-react';
+import { localDate } from '../utils/fortigateParser';
 
 export default function FilterBar({ 
   filters, 
@@ -34,9 +35,9 @@ export default function FilterBar({
       
       setFilters(prev => ({
         ...prev,
-        startDate: yDay.toISOString().substring(0, 10),
+        startDate: localDate(yDay),
         startTime: '00:00',
-        endDate: yEnd.toISOString().substring(0, 10),
+        endDate: localDate(yEnd),
         endTime: '23:59'
       }));
       return;
@@ -46,9 +47,9 @@ export default function FilterBar({
         const dMax = new Date(maxDate);
         setFilters(prev => ({
           ...prev,
-          startDate: dMin.toISOString().substring(0, 10),
+          startDate: localDate(dMin),
           startTime: dMin.toTimeString().substring(0, 5),
-          endDate: dMax.toISOString().substring(0, 10),
+          endDate: localDate(dMax),
           endTime: dMax.toTimeString().substring(0, 5)
         }));
       }
@@ -57,9 +58,9 @@ export default function FilterBar({
 
     setFilters(prev => ({
       ...prev,
-      startDate: start.toISOString().substring(0, 10),
+      startDate: localDate(start),
       startTime: start.toTimeString().substring(0, 5),
-      endDate: end.toISOString().substring(0, 10),
+      endDate: localDate(end),
       endTime: end.toTimeString().substring(0, 5)
     }));
   };

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseKvLine, parseFortiGateLogsDetailed, buildUserWebsiteSummary,
-  eventtimeToMs, dateTimeToMs, looksLikeCsvHeader, splitCsvLine, extractCleanHost
+  eventtimeToMs, dateTimeToMs, looksLikeCsvHeader, splitCsvLine, extractCleanHost, localDate
 } from '../src/utils/fortigateParser.js';
 import { isIPv4, isPrivateIPv4, resolvableIps } from '../src/utils/reverseDns.js';
 
@@ -133,4 +133,11 @@ test('same normalisation as aup-report.py: Unrated, no url fallback', () => {
   assert.equal(rec.isAllowed, true);
   const noHost = parseFortiGateLogsDetailed('eventtime=1791389686551541600 srcip=192.168.2.23 dstip=203.0.113.9 url="https://other.example/"').records[0];
   assert.equal(noHost.site, '203.0.113.9');       // no hostname: dstip, url is not read
+});
+
+test('localDate is the browser-zone date, not the UTC one', () => {
+  const d = new Date(2026, 9, 8, 0, 47, 27);              // local 2026-10-08 00:47:27
+  assert.equal(localDate(d), '2026-10-08');
+  // the time filter reads `${date}T00:00:00` as local, so the default range from localDate covers d
+  assert.ok(new Date(`${localDate(d)}T00:00:00`).getTime() <= d.getTime());
 });
