@@ -25,3 +25,6 @@ dist-ssr
 
 # test fixtures are logs on purpose
 !tests/fixtures/*.log
+
+# Claude Code per-user permissions (may contain secrets)
+.claude/settings.local.json
